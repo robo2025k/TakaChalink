@@ -369,12 +369,68 @@
         }
 
         // --- 以下、変更のない関数群 (ロジックは前回までと同じ) ---
-        function logMessage(message) { const logArea = document.getElementById('mqtt-log'); if (!logArea) return; const now = new Date(); const timestamp = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`; logArea.value += `[${timestamp}] ${message}\n`; logArea.scrollTop = logArea.scrollHeight; }
-        function createMovingIcon(id, color) { return L.divIcon({ className: 'moving-icon-container', html: `<div class="moving-icon" style="background-color: ${color};">${id}</div>`, iconSize: [16, 16], iconAnchor: [8, 8] }); }
-        function initializeHistoryModal() { const modalOverlay = document.getElementById('history-modal-overlay'); const showBtn = document.getElementById('show-history-btn'); const closeBtn = document.getElementById('close-history-btn'); showBtn.addEventListener('click', () => { updateHistoryTable(); modalOverlay.style.display = 'flex'; }); closeBtn.addEventListener('click', () => { modalOverlay.style.display = 'none'; }); modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) { modalOverlay.style.display = 'none'; } }); }
-        function initializeCharts() { const tsCtx = document.getElementById('timeSeriesChart').getContext('2d'); timeSeriesChart = new Chart(tsCtx, { type: 'line', data: timeSeriesData, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true }, x: { type: 'category' } }, plugins: { legend: { display: false }, zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } } } }); const ecCtx = document.getElementById('exitCountChart').getContext('2d'); exitCountChart = new Chart(ecCtx, { type: 'bar', data: { labels: ['東', '北', '西', '南'], datasets: [{ label: '逸脱回数', data: Object.values(exitCounts), backgroundColor: ['#ffc107', '#17a2b8', '#28a745', '#007bff'] }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } } }); }
-        function initializeDrawControls(layerGroup) { const drawControl = new L.Control.Draw({ edit: { featureGroup: layerGroup }, draw: { polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false } }); map.addControl(drawControl); map.on(L.Draw.Event.CREATED, (e) => { layerGroup.clearLayers(); layerGroup.addLayer(e.layer); drawnPolygon = e.layer; polygonCentroid = calculateCentroid(drawnPolygon); savePolygonToStorage(); updateAllStatuses(); }); map.on('draw:edited', (e) => { e.layers.eachLayer(layer => { drawnPolygon = layer; }); polygonCentroid = calculateCentroid(drawnPolygon); savePolygonToStorage(); updateAllStatuses(); }); map.on('draw:deleted', () => { drawnPolygon = null; polygonCentroid = null; clearPolygonFromStorage(); updateAllStatuses(); }); }
-        function updateTimeSeriesData() { if (!timeSeriesChart) return; const outsideCount = Array.from(managedDevices.values()).filter(d => !d.isInside).length; const now = new Date(); timeSeriesData.labels.push(now.toLocaleTimeString()); timeSeriesData.datasets[0].data.push(outsideCount); const chart = timeSeriesChart; if (!chart.scales || !chart.scales.x) { chart.update('none'); return; } const xScale = chart.scales.x; const dataLength = timeSeriesData.labels.length; const isScrolledBack = xScale.max < dataLength - 5; if (!isScrolledBack) { const visiblePoints = 50; if (dataLength > visiblePoints) { chart.options.scales.x.min = dataLength - visiblePoints; chart.options.scales.x.max = dataLength - 1; } else { delete chart.options.scales.x.min; delete chart.options.scales.x.max; } } chart.update('none'); }
+        function logMessage(message) { 
+            const logArea = document.getElementById('mqtt-log'); 
+            if (!logArea) 
+                return; 
+            const now = new Date(); 
+            const timestamp = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            logArea.value += `[${timestamp}] ${message}\n`; logArea.scrollTop = logArea.scrollHeight; 
+        }
+        function createMovingIcon(id, color) {
+            return L.divIcon({ className: 'moving-icon-container', html: `<div class="moving-icon" style="background-color: ${color};">${id}</div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
+        }
+        function initializeHistoryModal() { 
+            const modalOverlay = document.getElementById('history-modal-overlay');
+            const showBtn = document.getElementById('show-history-btn'); 
+            const closeBtn = document.getElementById('close-history-btn'); 
+            showBtn.addEventListener('click', () => { updateHistoryTable(); modalOverlay.style.display = 'flex'; }); 
+            closeBtn.addEventListener('click', () => { modalOverlay.style.display = 'none'; });
+            modalOverlay.addEventListener('click', (e) => {
+                if (e.target === modalOverlay) {
+                    modalOverlay.style.display = 'none'; 
+                } 
+            }); 
+        }
+        function initializeCharts() { 
+            const tsCtx = document.getElementById('timeSeriesChart').getContext('2d'); 
+            timeSeriesChart = new Chart(tsCtx, { type: 'line', data: timeSeriesData, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true }, x: { type: 'category' } }, plugins: { legend: { display: false }, zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } } } }); 
+            const ecCtx = document.getElementById('exitCountChart').getContext('2d');
+            exitCountChart = new Chart(ecCtx, { type: 'bar', data: { labels: ['東', '北', '西', '南'], datasets: [{ label: '逸脱回数', data: Object.values(exitCounts), backgroundColor: ['#ffc107', '#17a2b8', '#28a745', '#007bff'] }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } } });
+        }
+        function initializeDrawControls(layerGroup) {
+            const drawControl = new L.Control.Draw({ edit: { featureGroup: layerGroup }, draw: { polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false } }); 
+            map.addControl(drawControl); 
+            map.on(L.Draw.Event.CREATED, (e) => { layerGroup.clearLayers(); layerGroup.addLayer(e.layer); drawnPolygon = e.layer; polygonCentroid = calculateCentroid(drawnPolygon); savePolygonToStorage(); updateAllStatuses(); }); 
+            map.on('draw:edited', (e) => { e.layers.eachLayer(layer => { drawnPolygon = layer; }); polygonCentroid = calculateCentroid(drawnPolygon); savePolygonToStorage(); updateAllStatuses(); }); map.on('draw:deleted', () => { drawnPolygon = null; polygonCentroid = null; clearPolygonFromStorage(); updateAllStatuses(); });
+        }
+        function updateTimeSeriesData() { 
+            if (!timeSeriesChart) 
+                return; 
+            const outsideCount = Array.from(managedDevices.values()).filter(d => !d.isInside).length; 
+            const now = new Date(); 
+            timeSeriesData.labels.push(now.toLocaleTimeString()); 
+            timeSeriesData.datasets[0].data.push(outsideCount); 
+            const chart = timeSeriesChart; 
+            if (!chart.scales || !chart.scales.x) {
+                chart.update('none'); 
+                return; 
+            }
+            const xScale = chart.scales.x;
+            const dataLength = timeSeriesData.labels.length; 
+            const isScrolledBack = xScale.max < dataLength - 5;
+            if (!isScrolledBack) { 
+                const visiblePoints = 50;
+                if (dataLength > visiblePoints) {
+                    chart.options.scales.x.min = dataLength - visiblePoints;
+                    chart.options.scales.x.max = dataLength - 1; 
+                } else {
+                    delete chart.options.scales.x.min;
+                    delete chart.options.scales.x.max;
+                } 
+            } 
+            chart.update('none'); 
+        }
         function logOutsideCount() { const outsideCount = Array.from(managedDevices.values()).filter(d => !d.isInside).length; const logEntry = { timestamp: new Date(), count: outsideCount }; historyLog.unshift(logEntry); if (historyLog.length > MAX_HISTORY_LOG) { historyLog.pop(); } }
         function updateHistoryTable() { const tbody = document.getElementById('history-table-body'); tbody.innerHTML = ''; historyLog.forEach(log => { const row = tbody.insertRow(); row.insertCell().textContent = log.timestamp.toLocaleTimeString(); const countCell = row.insertCell(); countCell.textContent = log.count; if (log.count > 0) { countCell.style.color = '#dc3545'; countCell.style.fontWeight = '700'; } }); }
         function updateTable() { const devicesArray = Array.from(managedDevices.values()); devicesArray.sort((a, b) => { let vA, vB; if(sortState.column === 'id') { vA = String(a.id); vB = String(b.id); } else { vA = a.isInside; vB = b.isInside; } if (vA < vB) return sortState.order === 'asc' ? -1 : 1; if (vA > vB) return sortState.order === 'asc' ? 1 : -1; return 0; }); const container = document.getElementById('points-tables-container'); container.innerHTML = ''; const columnsData = chunkArrayByColumn(devicesArray, NUM_TABLE_COLUMNS); columnsData.forEach(columnData => { if (columnData.length === 0) return; const columnDiv = document.createElement('div'); columnDiv.className = 'table-column'; const table = document.createElement('table'); table.className = 'table-common'; const tbody = document.createElement('tbody'); columnData.forEach(p => { const row = tbody.insertRow(); const idCell = row.insertCell(); idCell.textContent = p.id; idCell.className = 'clickable-id'; idCell.addEventListener('click', () => { map.panTo(p.latlng); p.marker.openPopup(); }); const statusCell = row.insertCell(); statusCell.innerHTML = `<span class="status ${p.isInside ? 'inside' : 'outside'}">${drawnPolygon ? (p.isInside ? '範囲内' : '範囲外') : '未判定'}</span>`; }); table.appendChild(tbody); columnDiv.appendChild(table); container.appendChild(columnDiv); }); document.querySelectorAll('#points-header-table th .sort-arrow').forEach(arrow => arrow.textContent = ''); const activeHeader = document.querySelector(`#points-header-table th[data-column="${sortState.column}"] .sort-arrow`); if (activeHeader) activeHeader.textContent = sortState.order === 'asc' ? '▲' : '▼'; }
