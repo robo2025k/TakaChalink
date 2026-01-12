@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MQTT GPS 内外判定ツール (内外判定色分け版)</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+
+    <!-- Paho MQTT Client Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js" type="text/javascript"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+
+    <style>
+        /* CSSは変更なし */
+        body { font-family: 'BIZ UDPGothic', sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background-color: #f0f0f0; }
+        #title-container { padding: 10px 30px 0; background-color: white; }
+        h1 { text-align: center; margin: 0; margin-bottom: 10px; font-size: 1.5em; font-weight: 700; }
+        #controls-container { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 15px; padding: 5px 10px 10px 10px; background-color: white; border-bottom: 1px solid #ddd; }
+        #controls-container button { padding: 5px 15px; font-family: inherit; font-size: 0.9em; cursor: pointer; border: 1px solid #6c757d; background-color: #fff; border-radius: 5px; }
+        #controls-container button:hover { background-color: #f0f0f0; }
+        #controls-container button#sync-sheet-btn { background-color: #17a2b8; color: white; border-color: #17a2b8; }
+        #controls-container button#sync-sheet-btn:hover { background-color: #138496; }
+        #controls-container button:disabled { background-color: #e9ecef; cursor: not-allowed; }
+        #connect-btn.connect { background-color: #28a745; color: white; border-color: #28a745; }
+        #connect-btn.connect:hover { background-color: #218838; }
+        #connect-btn.disconnect { background-color: #dc3545; color: white; border-color: #dc3545; }
+        #connect-btn.disconnect:hover { background-color: #c82333; }
+        .control-group { display: flex; align-items: center; gap: 10px; }
+        #mqtt-status { padding: 5px 10px; border-radius: 5px; font-weight: bold; font-size: 0.9em;}
+        #mqtt-status.idle { background-color: #e2e3e5; color: #343a40; }
+        #mqtt-status.connecting { background-color: #fff3cd; color: #856404; }
+        #mqtt-status.connected { background-color: #d4edda; color: #155724; }
+        #mqtt-status.failed { background-color: #f8d7da; color: #721c24; }
+        #auto-sync-container { padding: 5px 10px; border: 1px solid #ced4da; border-radius: 5px; background-color: #f8f9fa; font-size: 0.9em; }
+        #auto-sync-container label { cursor: pointer; vertical-align: middle; }
+        #auto-sync-container input { vertical-align: middle; margin-right: 5px; }
+        #map-container { flex-grow: 1; padding: 15px; padding-top: 0; background-color: white; display: flex; }
+        #map { width: 100%; height: 100%; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        #info-container { padding: 15px; background-color: #f8f9fa; border-top: 1px solid #dee2e6; flex-shrink: 0; max-height: 35vh; overflow-y: auto; display: flex; flex-wrap: nowrap; align-items: stretch; gap: 20px; }
+        .info-section { padding: 0 10px; text-align: left; flex-shrink: 0; }
+        #user-info-wrapper { display: flex; flex-direction: column; gap: 20px; }
+        #debug-point-control { flex-basis: 280px; }
+        #log-section { flex-basis: 350px; display: flex; flex-direction: column; min-width: 0; }
+        #mqtt-log { width: 100%; flex-grow: 1; border: 1px solid #ccc; font-family: monospace; font-size: 12px; box-sizing: border-box; background-color: #fff; resize: none; padding: 5px; line-height: 1.4; }
+        #points-status { flex-basis: 450px; display: flex; flex-direction: column; height: 30vh; }
+        #points-tables-container { display: flex; gap: 15px; overflow-y: auto; flex-grow: 1; min-height: 0; }
+        #stats-container { flex-grow: 1; display: flex; gap: 20px; min-width: 500px; }
+        .chart-wrapper { flex: 1; display: flex; flex-direction: column; position: relative; min-width: 0; }
+        .chart-wrapper h3 { font-size: 1.1em; margin: 0 0 5px 0; text-align: center; flex-shrink: 0; }
+        .chart-wrapper canvas:active { cursor: grabbing; }
+        .chart-wrapper > .chart-container { flex-grow: 1; position: relative; min-height: 0; cursor: grab; }
+        .info-section h2 { font-size: 1.1em; margin-top: 0; margin-bottom: 8px; border-bottom: 2px solid #ccc; padding-bottom: 3px; font-weight: 700; }
+        .info-section p { margin: 8px 0; font-size: 1em; }
+        .status.inside { color: #28a745; font-weight: 700; }
+        .status.outside { color: #dc3545; font-weight: 700; }
+        .table-common { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        .table-common th, .table-common td { border: 1px solid #ddd; padding: 6px 8px; text-align: center; }
+        .table-common th { background-color: #f2f2f2; cursor: pointer; user-select: none; font-weight: 700; }
+        .table-common th:hover { background-color: #e9e9e9; }
+        .table-common th .sort-arrow { display: inline-block; width: 1em; text-align: center; }
+        .clickable-id { cursor: pointer; color: #007bff; text-decoration: underline; font-weight: 700; }
+        .clickable-id:hover { color: #0056b3; }
+        .table-column { flex: 1; min-width: 0; }
+        .moving-icon-container { background: transparent; border: none; }
+        .moving-icon { min-width: 16px; height: 16px; padding: 0 4px; font-size: 9px; border-radius: 8px; color: white; font-weight: 700; border: 1px solid rgba(255,255,255,0.7); box-shadow: 0 0 3px rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; }
+        .debug-icon-container { background: transparent; border: none; }
+        .debug-icon { font-size: 28px; text-shadow: 0 0 3px black; }
+        #debug-form { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;}
+        #debug-form input { width: 100px; padding: 4px; border: 1px solid #ccc; border-radius: 4px;}
+        #debug-form button { padding: 4px 10px; border: 1px solid #007bff; background-color: #007bff; color: white; border-radius: 4px; cursor: pointer; }
+        #debug-form button:hover { background-color: #0056b3; }
+        .hidden { display: none !important; }
+        #history-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        #history-modal-content { background-color: white; padding: 25px; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        #history-modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dee2e6; padding-bottom: 10px; margin-bottom: 15px; }
+        #history-modal-header h3 { margin: 0; font-size: 1.4em; }
+        #close-history-btn { font-size: 1.5em; line-height: 1; border: none; background: transparent; cursor: pointer; padding: 0 5px; color: #6c757d; }
+        #close-history-btn:hover { color: #343a40; }
+        #history-table-container { overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div id="title-container"><h1>MQTT GPS 内外判定ツール</h1></div>
+    <div id="controls-container">
+        <div class="control-group">
+            <button id="connect-btn" class="connect">接続</button>
+            <div id="mqtt-status" class="idle">MQTT: 未接続</div>
+        </div>
+        <div class="control-group">
+            <button id="toggle-debug-btn">デバッグツール表示</button>
+            <button id="toggle-log-btn">ログ 非表示</button>
+            <button id="show-history-btn">履歴表示</button>
+        </div>
+        <div class="control-group">
+            <button id="sync-sheet-btn">データをスプレッドシートに記録</button>
+            <div id="auto-sync-container">
+                <input type="checkbox" id="auto-sync-checkbox">
+                <label for="auto-sync-checkbox">1分ごとに自動記録</label>
+            </div>
+        </div>
+    </div>
+    <div id="map-container"><div id="map"></div></div>
+    <div id="info-container">
+        <div id="user-info-wrapper">
+            <div class="info-section hidden" id="debug-point-control"><h2>デバッグ用ポイント</h2><div id="debug-form"><input type="text" id="debug-lat" placeholder="緯度"><input type="text" id="debug-lng" placeholder="経度"><button id="add-debug-point-btn">追加/更新</button></div><p>座標: <strong id="debug-coords">未設定</strong></p><p>判定結果: <span id="debug-result" class="status">地図をクリックするか座標を入力</span></p></div>
+        </div>
+        <div class="info-section" id="log-section">
+            <h2>MQTT ログ</h2>
+            <textarea id="mqtt-log" readonly></textarea>
+        </div>
+        <div class="info-section" id="points-status"><h2>受信デバイス一覧</h2><table id="points-header-table" class="table-common"><thead><tr><th data-column="id">ID<span class="sort-arrow"></span></th><th data-column="status">状態<span class="sort-arrow"></span></th></tr></thead></table><div id="points-tables-container"></div></div>
+        <div id="stats-container">
+            <div class="chart-wrapper">
+                <h3>範囲外デバイス数の推移</h3>
+                <div class="chart-container">
+                    <canvas id="timeSeriesChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <h3>逸脱方向の累計</h3>
+                <div class="chart-container">
+                    <canvas id="exitCountChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="history-modal-overlay"><div id="history-modal-content"><div id="history-modal-header">
+        <h3>範囲外デバイス数ログ</h3>
+        <button id="close-history-btn">&times;</button></div><div id="history-table-container"><table class="table-common"><thead>
+            <tr><th>時刻</th><th>範囲外の台数</th></tr></thead>
+            <tbody id="history-table-body"></tbody></table></div></div></div>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+    <script>
+        // === 設定 (変更なし) ===
+        const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyE15U5A2OOq5qg9415DiVvD6SWNM7NgUD3Gwuwt7lwqMs_RmY6MsEou2Ob_qb8oopo/exec';
+        const brokerConfig = { host: "takataka.msep.jp", port: 443, path: "/mqtt/", topic: "a" };
+        const credentials = { userName: "iot", password: "iot-school" };
+        
+        // === グローバル変数 ===
+        let map, drawnPolygon = null, polygonCentroid = null;
+        const STORAGE_KEY = 'savedPolygonGeoJSON';
+        let mqttClient;
+        let isMqttConnected = false;
+        const MAP_CENTER = [36.32, 139.02], MAP_ZOOM = 13;
+        const managedDevices = new Map();
+        const NUM_TABLE_COLUMNS = 2;
+        let sortState = { column: 'id', order: 'asc' };
+        let debugPoint = null;
+        let timeSeriesChart, exitCountChart;
+        let timeSeriesData = { labels: [], datasets: [{ label: '範囲外のデバイス数', data: [], borderColor: 'rgba(220, 53, 69, 1)', tension: 0.1, fill: false }] };
+        let exitCounts = { east: 0, north: 0, west: 0, south: 0 };
+        let historyLog = [];
+        const MAX_HISTORY_LOG = 500;
+        let autoSyncTimerId = null; 
+        
+        // ★★★ 再接続用の変数を追加 ★★★
+        let reconnectTimerId = null;
+        const RECONNECT_DELAY = 5000; // 5秒後に再接続 (ミリ秒単位)
+        
+        window.onload = function() {
+            map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
+            const drawnItems = new L.FeatureGroup().addTo(map);
+            initializeDrawControls(drawnItems);
+            loadPolygonFromStorage(drawnItems);
+            initializeTableSorting();
+            initializeDebugPointControls();
+            initializeControls();
+            initializeHistoryModal();
+            initializeCharts();
+            
+            setInterval(() => {
+                updateTimeSeriesData();
+                logOutsideCount();
+            }, 2000);
+            
+            updateAllStatuses();
+        };
+
+        function onMessageArrived(message) {
+            logMessage(`Message received on topic "${message.destinationName}"`);
+            logMessage(` -> Payload: ${message.payloadString}`);
+            try {
+                const data = JSON.parse(message.payloadString);
+
+                if (data.name === undefined || data.lat === undefined || data.lon === undefined) {
+                    logMessage("WARNING: Invalid format (missing 'name', 'lat', or 'lon').");
+                    return;
+                }
+
+                const deviceId = data.name;
+                const newLatLng = L.latLng(data.lat, data.lon);
+
+                let device = managedDevices.get(deviceId);
+
+                if (!device) {
+                    device = {
+                        id: deviceId,
+                        latlng: newLatLng,
+                        wasInside: false,
+                        isInside: false,
+                        marker: L.marker(newLatLng, { 
+                            icon: createMovingIcon(deviceId, '#6c757d') 
+                        }).addTo(map)
+                    };
+                    device.marker.bindPopup(`デバイス: ${deviceId}`);
+                    managedDevices.set(deviceId, device);
+                    logMessage(` -> New device added: ${deviceId}`);
+                } else {
+                    device.latlng = newLatLng;
+                    device.marker.setLatLng(newLatLng);
+                }
+                
+                updateDeviceStatus(device);
+                updateTable();
+
+            } catch (error) {
+                logMessage(`ERROR: Failed to process message. ${error.message}`);
+                console.error(`Failed to process message. Error: ${error.message}`, message.payloadString);
+            }
+        }
+        
+        function updateAllStatuses() {
+            if (drawnPolygon && !polygonCentroid) polygonCentroid = calculateCentroid(drawnPolygon);
+            managedDevices.forEach(updateDeviceStatus);
+            updateTable();
+            checkDebugPointStatus();
+        }
+
+        function updateDeviceStatus(device) {
+            if (!device) return;
+            const wasInsideBeforeUpdate = device.isInside;
+            device.isInside = isPointInPolygon(device.latlng, drawnPolygon);
+            let newColor;
+            if (!drawnPolygon) {
+                newColor = '#6c757d';
+            } else {
+                newColor = device.isInside ? '#28a745' : '#dc3545';
+            }
+            device.marker.setIcon(createMovingIcon(device.id, newColor));
+            if (wasInsideBeforeUpdate && !device.isInside && polygonCentroid) {
+                const face = calculateExitFace(device.latlng, polygonCentroid);
+                if (face) {
+                    exitCounts[face]++;
+                    exitCountChart.data.datasets[0].data = Object.values(exitCounts);
+                    exitCountChart.update('none');
+                }
+            }
+        }
+
+        // --- MQTT接続関連の関数群 (ここから変更箇所) ---
+        function initializeControls() { const connectBtn = document.getElementById('connect-btn'); const debugBtn = document.getElementById('toggle-debug-btn'); const logBtn = document.getElementById('toggle-log-btn'); const debugSection = document.getElementById('debug-point-control'); const logSection = document.getElementById('log-section'); const syncBtn = document.getElementById('sync-sheet-btn'); const autoSyncCheckbox = document.getElementById('auto-sync-checkbox'); connectBtn.addEventListener('click', () => { if (!isMqttConnected) { initializeMqttClient(); } else { disconnectMqtt(); } }); debugBtn.addEventListener('click', () => { const isHidden = debugSection.classList.toggle('hidden'); debugBtn.textContent = isHidden ? 'デバッグツール表示' : 'デバッグツール非表示'; if (debugPoint && debugPoint.marker) { isHidden ? map.removeLayer(debugPoint.marker) : map.addLayer(debugPoint.marker).panTo(debugPoint.latlng); } }); logBtn.addEventListener('click', () => { const isHidden = logSection.classList.toggle('hidden'); logBtn.textContent = isHidden ? 'ログ 表示' : 'ログ 非表示'; }); syncBtn.addEventListener('click', () => sendDataToSpreadsheet(false)); autoSyncCheckbox.addEventListener('change', (event) => { if (event.target.checked) { startAutoSync(); } else { stopAutoSync(); } }); }
+        
+        function initializeMqttClient() {
+            // ★★★ 手動で接続ボタンが押された場合、スケジュール済みの再接続タイマーをキャンセルする ★★★
+            if (reconnectTimerId) {
+                clearTimeout(reconnectTimerId);
+                reconnectTimerId = null;
+            }
+
+            if (mqttClient && mqttClient.isConnected()) { logMessage("Already connected."); return; }
+            const connectBtn = document.getElementById('connect-btn');
+            connectBtn.disabled = true;
+            connectBtn.textContent = "接続中...";
+            updateMqttStatus('接続中...', 'connecting');
+            const clientId = "web_client_" + new Date().getTime();
+            mqttClient = new Paho.Client(brokerConfig.host, Number(brokerConfig.port), brokerConfig.path, clientId);
+            mqttClient.onConnectionLost = onConnectionLost;
+            mqttClient.onMessageArrived = onMessageArrived;
+            const connectOptions = {
+                userName: credentials.userName,
+                password: credentials.password,
+                useSSL: true,
+                cleanSession: true,
+                timeout: 10,
+                keepAliveInterval: 30, // ★★★ Keep-Aliveを追加して接続維持を試みる ★★★
+                onSuccess: onConnect,
+                onFailure: onConnectFailure
+            };
+            const fullUrl = `wss://${brokerConfig.host}:${brokerConfig.port}${brokerConfig.path}`;
+            logMessage(`Connecting to ${fullUrl}...`);
+            try {
+                mqttClient.connect(connectOptions);
+            } catch (error) {
+                logMessage(`FATAL ERROR before connect: ${error.message}`);
+                onConnectFailure({ errorMessage: `初期化エラー: ${error.message}`});
+            }
+        }
+        
+        function disconnectMqtt() {
+            // ★★★ 手動で切断する場合、スケジュールされている再接続を止める ★★★
+            if (reconnectTimerId) {
+                clearTimeout(reconnectTimerId);
+                reconnectTimerId = null;
+            }
+            if (mqttClient && mqttClient.isConnected()) {
+                logMessage("Disconnecting from MQTT broker...");
+                mqttClient.disconnect();
+            }
+        }
+
+        function updateMqttStatus(text, className) { const statusDiv = document.getElementById('mqtt-status'); statusDiv.textContent = `MQTT: ${text}`; statusDiv.className = className; }
+        
+        function onConnect() {
+            // ★★★ 接続に成功したら、再接続タイマーは不要なのでクリアする ★★★
+            if (reconnectTimerId) {
+                clearTimeout(reconnectTimerId);
+                reconnectTimerId = null;
+            }
+            isMqttConnected = true;
+            const connectBtn = document.getElementById('connect-btn');
+            connectBtn.disabled = false;
+            connectBtn.textContent = "切断";
+            connectBtn.className = "disconnect";
+            updateMqttStatus('接続完了', 'connected');
+            logMessage('Successfully connected to MQTT broker.');
+            mqttClient.subscribe(brokerConfig.topic);
+            logMessage(`Subscribed to topic: "${brokerConfig.topic}"`);
+        }
+        
+        function onConnectFailure(response) {
+            isMqttConnected = false;
+            const connectBtn = document.getElementById('connect-btn');
+            connectBtn.disabled = false;
+            connectBtn.textContent = "接続";
+            connectBtn.className = "connect";
+            logMessage(`ERROR: Connection failed: ${response.errorMessage}`);
+            console.error(`ERROR: Connection failed:`, response);
+
+            // ★★★ 再接続処理をスケジュールする ★★★
+            const delayInSeconds = RECONNECT_DELAY / 1000;
+            updateMqttStatus(`接続失敗 (${delayInSeconds}秒後に再接続)`, 'failed');
+            logMessage(`${delayInSeconds}秒後に再接続を試みます...`);
+            reconnectTimerId = setTimeout(initializeMqttClient, RECONNECT_DELAY);
+        }
+
+        function onConnectionLost(response) {
+            isMqttConnected = false;
+            const connectBtn = document.getElementById('connect-btn');
+            connectBtn.disabled = false;
+            connectBtn.textContent = "接続";
+            connectBtn.className = "connect";
+            
+            if (response.errorCode !== 0) {
+                // ★★★ 予期せぬ切断の場合、再接続処理をスケジュールする ★★★
+                logMessage(`ERROR: Connection lost: ${response.errorMessage}`);
+                console.error(`ERROR: Connection lost:`, response);
+                const delayInSeconds = RECONNECT_DELAY / 1000;
+                updateMqttStatus(`接続断 (${delayInSeconds}秒後に再接続)`, 'failed');
+                logMessage(`${delayInSeconds}秒後に再接続を試みます...`);
+                reconnectTimerId = setTimeout(initializeMqttClient, RECONNECT_DELAY);
+            } else {
+                // ユーザーが意図的に切断した場合（再接続しない）
+                updateMqttStatus('未接続', 'idle');
+                logMessage('Disconnected successfully.');
+            }
+        }
+
+        // --- 以下、変更のない関数群 (ロジックは前回までと同じ) ---
+        function logMessage(message) { const logArea = document.getElementById('mqtt-log'); if (!logArea) return; const now = new Date(); const timestamp = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`; logArea.value += `[${timestamp}] ${message}\n`; logArea.scrollTop = logArea.scrollHeight; }
+        function createMovingIcon(id, color) { return L.divIcon({ className: 'moving-icon-container', html: `<div class="moving-icon" style="background-color: ${color};">${id}</div>`, iconSize: [16, 16], iconAnchor: [8, 8] }); }
+        function initializeHistoryModal() { const modalOverlay = document.getElementById('history-modal-overlay'); const showBtn = document.getElementById('show-history-btn'); const closeBtn = document.getElementById('close-history-btn'); showBtn.addEventListener('click', () => { updateHistoryTable(); modalOverlay.style.display = 'flex'; }); closeBtn.addEventListener('click', () => { modalOverlay.style.display = 'none'; }); modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) { modalOverlay.style.display = 'none'; } }); }
+        function initializeCharts() { const tsCtx = document.getElementById('timeSeriesChart').getContext('2d'); timeSeriesChart = new Chart(tsCtx, { type: 'line', data: timeSeriesData, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true }, x: { type: 'category' } }, plugins: { legend: { display: false }, zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } } } }); const ecCtx = document.getElementById('exitCountChart').getContext('2d'); exitCountChart = new Chart(ecCtx, { type: 'bar', data: { labels: ['東', '北', '西', '南'], datasets: [{ label: '逸脱回数', data: Object.values(exitCounts), backgroundColor: ['#ffc107', '#17a2b8', '#28a745', '#007bff'] }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } } }); }
+        function initializeDrawControls(layerGroup) { const drawControl = new L.Control.Draw({ edit: { featureGroup: layerGroup }, draw: { polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false } }); map.addControl(drawControl); map.on(L.Draw.Event.CREATED, (e) => { layerGroup.clearLayers(); layerGroup.addLayer(e.layer); drawnPolygon = e.layer; polygonCentroid = calculateCentroid(drawnPolygon); savePolygonToStorage(); updateAllStatuses(); }); map.on('draw:edited', (e) => { e.layers.eachLayer(layer => { drawnPolygon = layer; }); polygonCentroid = calculateCentroid(drawnPolygon); savePolygonToStorage(); updateAllStatuses(); }); map.on('draw:deleted', () => { drawnPolygon = null; polygonCentroid = null; clearPolygonFromStorage(); updateAllStatuses(); }); }
+        function updateTimeSeriesData() { if (!timeSeriesChart) return; const outsideCount = Array.from(managedDevices.values()).filter(d => !d.isInside).length; const now = new Date(); timeSeriesData.labels.push(now.toLocaleTimeString()); timeSeriesData.datasets[0].data.push(outsideCount); const chart = timeSeriesChart; if (!chart.scales || !chart.scales.x) { chart.update('none'); return; } const xScale = chart.scales.x; const dataLength = timeSeriesData.labels.length; const isScrolledBack = xScale.max < dataLength - 5; if (!isScrolledBack) { const visiblePoints = 50; if (dataLength > visiblePoints) { chart.options.scales.x.min = dataLength - visiblePoints; chart.options.scales.x.max = dataLength - 1; } else { delete chart.options.scales.x.min; delete chart.options.scales.x.max; } } chart.update('none'); }
+        function logOutsideCount() { const outsideCount = Array.from(managedDevices.values()).filter(d => !d.isInside).length; const logEntry = { timestamp: new Date(), count: outsideCount }; historyLog.unshift(logEntry); if (historyLog.length > MAX_HISTORY_LOG) { historyLog.pop(); } }
+        function updateHistoryTable() { const tbody = document.getElementById('history-table-body'); tbody.innerHTML = ''; historyLog.forEach(log => { const row = tbody.insertRow(); row.insertCell().textContent = log.timestamp.toLocaleTimeString(); const countCell = row.insertCell(); countCell.textContent = log.count; if (log.count > 0) { countCell.style.color = '#dc3545'; countCell.style.fontWeight = '700'; } }); }
+        function updateTable() { const devicesArray = Array.from(managedDevices.values()); devicesArray.sort((a, b) => { let vA, vB; if(sortState.column === 'id') { vA = String(a.id); vB = String(b.id); } else { vA = a.isInside; vB = b.isInside; } if (vA < vB) return sortState.order === 'asc' ? -1 : 1; if (vA > vB) return sortState.order === 'asc' ? 1 : -1; return 0; }); const container = document.getElementById('points-tables-container'); container.innerHTML = ''; const columnsData = chunkArrayByColumn(devicesArray, NUM_TABLE_COLUMNS); columnsData.forEach(columnData => { if (columnData.length === 0) return; const columnDiv = document.createElement('div'); columnDiv.className = 'table-column'; const table = document.createElement('table'); table.className = 'table-common'; const tbody = document.createElement('tbody'); columnData.forEach(p => { const row = tbody.insertRow(); const idCell = row.insertCell(); idCell.textContent = p.id; idCell.className = 'clickable-id'; idCell.addEventListener('click', () => { map.panTo(p.latlng); p.marker.openPopup(); }); const statusCell = row.insertCell(); statusCell.innerHTML = `<span class="status ${p.isInside ? 'inside' : 'outside'}">${drawnPolygon ? (p.isInside ? '範囲内' : '範囲外') : '未判定'}</span>`; }); table.appendChild(tbody); columnDiv.appendChild(table); container.appendChild(columnDiv); }); document.querySelectorAll('#points-header-table th .sort-arrow').forEach(arrow => arrow.textContent = ''); const activeHeader = document.querySelector(`#points-header-table th[data-column="${sortState.column}"] .sort-arrow`); if (activeHeader) activeHeader.textContent = sortState.order === 'asc' ? '▲' : '▼'; }
+        function createDebugIcon() { return L.divIcon({ className: 'debug-icon-container', html: `<div class="debug-icon">➕</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }); }
+        function calculateCentroid(polygon) { if (!polygon) return null; let lat = 0, lng = 0; const latlngs = polygon.getLatLngs()[0]; if (!latlngs || latlngs.length === 0) return null; latlngs.forEach(ll => { lat += ll.lat; lng += ll.lng; }); return L.latLng(lat / latlngs.length, lng / latlngs.length); }
+        function calculateExitFace(point, centroid) { if (!point || !centroid) return null; const angle = Math.atan2(point.lat - centroid.lat, point.lng - centroid.lng) * 180 / Math.PI; const normalizedAngle = (angle < 0) ? angle + 360 : angle; if (normalizedAngle >= 315 || normalizedAngle < 45) return 'east'; if (normalizedAngle >= 45 && normalizedAngle < 135) return 'north'; if (normalizedAngle >= 135 && normalizedAngle < 225) return 'west'; if (normalizedAngle >= 225 && normalizedAngle < 315) return 'south'; return null; }
+        function isPointInPolygon(point, polygon) { if (!polygon || !point) return false; const latlngs = polygon.getLatLngs()[0]; if (!latlngs) return false; const x = point.lng, y = point.lat; let isInside = false; for (let i = 0, j = latlngs.length - 1; i < latlngs.length; j = i++) { const xi = latlngs[i].lng, yi = latlngs[i].lat; const xj = latlngs[j].lng, yj = latlngs[j].lat; if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) { isInside = !isInside; } } return isInside; }
+        function chunkArrayByColumn(array, numColumns) { const columns = Array.from({ length: numColumns }, () => []); array.forEach((item, index) => { columns[index % numColumns].push(item); }); return columns; }
+        function savePolygonToStorage() { if (drawnPolygon) localStorage.setItem(STORAGE_KEY, JSON.stringify(drawnPolygon.toGeoJSON())); }
+        function clearPolygonFromStorage() { localStorage.removeItem(STORAGE_KEY); }
+        function loadPolygonFromStorage(layerGroup) { const savedGeoJSON = localStorage.getItem(STORAGE_KEY); if (savedGeoJSON) { try { const restoredLayer = L.geoJSON(JSON.parse(savedGeoJSON)).getLayers()[0]; if(restoredLayer) { layerGroup.addLayer(restoredLayer); drawnPolygon = restoredLayer; polygonCentroid = calculateCentroid(drawnPolygon); updateAllStatuses(); } } catch (e) { console.error("Error loading polygon:", e); clearPolygonFromStorage(); } } }
+        function initializeTableSorting() { document.querySelectorAll('#points-header-table th').forEach(headerCell => { headerCell.addEventListener('click', () => { const column = headerCell.dataset.column; if (sortState.column === column) { sortState.order = sortState.order === 'asc' ? 'desc' : 'asc'; } else { sortState.column = column; sortState.order = 'asc'; } updateTable(); }); }); }
+        function addOrUpdateDebugPoint(latlng) { if (debugPoint && debugPoint.marker) { map.removeLayer(debugPoint.marker); } const marker = L.marker(latlng, { icon: createDebugIcon() }); const isDebugPanelVisible = !document.getElementById('debug-point-control').classList.contains('hidden'); if (isDebugPanelVisible) { marker.addTo(map); } marker.bindPopup('デバッグ用ポイント').openPopup(); debugPoint = { marker: marker, latlng: latlng, isInside: false }; document.getElementById('debug-lat').value = latlng.lat.toFixed(6); document.getElementById('debug-lng').value = latlng.lng.toFixed(6); updateAllStatuses(); }
+        function initializeDebugPointControls() { map.on('click', (e) => { addOrUpdateDebugPoint(e.latlng); }); document.getElementById('add-debug-point-btn').addEventListener('click', () => { const lat = parseFloat(document.getElementById('debug-lat').value); const lng = parseFloat(document.getElementById('debug-lng').value); if (!isNaN(lat) && !isNaN(lng)) { addOrUpdateDebugPoint(L.latLng(lat, lng)); } else { alert('有効な緯度・経度を入力してください。'); } }); }
+        function checkDebugPointStatus() { const coordsStrong = document.getElementById('debug-coords'); const resultSpan = document.getElementById('debug-result'); if (!debugPoint) { coordsStrong.textContent = "未設定"; resultSpan.textContent = '地図をクリックするか座標を入力'; resultSpan.className = 'status'; return; } coordsStrong.textContent = `${debugPoint.latlng.lat.toFixed(6)}, ${debugPoint.latlng.lng.toFixed(6)}`; if (!drawnPolygon) { resultSpan.textContent = '多角形を描画してください'; resultSpan.className = 'status'; debugPoint.isInside = false; return; } const isInside = isPointInPolygon(debugPoint.latlng, drawnPolygon); debugPoint.isInside = isInside; resultSpan.textContent = isInside ? '範囲内です' : '範囲外です'; resultSpan.className = isInside ? 'status inside' : 'status outside'; }
+        function startAutoSync() { if (autoSyncTimerId) return; const now = new Date(); const seconds = now.getSeconds(); const delay = (60 - seconds) * 1000; alert(`自動記録を開始します。最初の記録は ${Math.round(delay / 1000)} 秒後に行われます。`); logMessage(`Auto-sync will start in ${Math.round(delay / 1000)} seconds.`); const firstTimeoutId = setTimeout(() => { logMessage("Executing first auto-sync..."); sendDataToSpreadsheet(true); autoSyncTimerId = setInterval(() => { logMessage("Executing scheduled auto-sync..."); sendDataToSpreadsheet(true); }, 60000); }, delay); autoSyncTimerId = firstTimeoutId; }
+        function stopAutoSync() { if (autoSyncTimerId) { clearTimeout(autoSyncTimerId); clearInterval(autoSyncTimerId); autoSyncTimerId = null; alert("自動記録を停止しました。"); logMessage("Auto-sync stopped."); } }
+        async function sendDataToSpreadsheet(isAutomatic = false) { if (!GAS_WEB_APP_URL) { if (!isAutomatic) alert('スプレッドシート連携機能を使用するには、HTMLファイル内の「GAS_WEB_APP_URL」に変数を設定してください。'); return; } if (historyLog.length === 0) { if (isAutomatic) { logMessage('Auto-sync: No new logs to send.'); } else { alert('送信できる新しいログがありません。'); } return; } const syncBtn = document.getElementById('sync-sheet-btn'); if (!isAutomatic) { syncBtn.disabled = true; syncBtn.textContent = '記録中...'; } const payload = { historyLog: [...historyLog], exitCounts: exitCounts }; try { const response = await fetch(GAS_WEB_APP_URL, { method: 'POST', mode: 'cors', cache: 'no-cache', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), redirect: 'follow' }); const result = await response.json(); if (result.result === 'success') { const successMsg = 'Data sync successful. History log cleared.'; if (!isAutomatic) { alert('データの記録に成功しました。クライアント側の履歴ログをクリアします。'); } logMessage(successMsg); historyLog = []; if (document.getElementById('history-modal-overlay').style.display === 'flex') { updateHistoryTable(); } } else { throw new Error(result.message || 'Unknown error occurred.'); } } catch (error) { const errorMsg = `Error syncing to spreadsheet: ${error.message}`; console.error(errorMsg, error); logMessage(`ERROR: ${errorMsg}`); alert(`エラー: スプレッドシートへの記録に失敗しました。\n\n詳細: ${error.message}\n\nログやコンソールで詳細を確認してください。`); if (isAutomatic) { document.getElementById('auto-sync-checkbox').checked = false; stopAutoSync(); alert("自動記録中にエラーが発生したため、自動記録を停止しました。"); } } finally { if (!isAutomatic) { syncBtn.disabled = false; syncBtn.textContent = 'データをスプレッドシートに記録'; } } }
+    </script>
+</body>
+</html>
